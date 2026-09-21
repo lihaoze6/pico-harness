@@ -158,8 +158,8 @@ const SCROLL_MIN_PER_FRAME = 4
 // stays smooth (no big jumps). Pending >MAX snaps excess.
 const SCROLL_INSTANT_THRESHOLD = 5 // ≤ this: drain all at once
 const SCROLL_HIGH_PENDING = 12 // threshold for HIGH step
-const SCROLL_STEP_MED = 2 // pending (INSTANT, HIGH): catch-up
-const SCROLL_STEP_HIGH = 3 // pending ≥ HIGH: fast flick
+const SCROLL_STEP_MED = 3 // pending (INSTANT, HIGH): catch-up
+const SCROLL_STEP_HIGH = 6 // pending ≥ HIGH: fast flick
 const SCROLL_MAX_PENDING = 30 // snap excess beyond this
 
 // xterm.js adaptive drain. Returns rows applied; mutates pendingScrollDelta.

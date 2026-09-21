@@ -15,7 +15,7 @@ export const LONG_MSG = 300
 export const MAX_HISTORY = 800
 export const THINKING_COT_MAX = 160
 
-// 加速前每次滚轮事件滚动的行数。设为 1 可保持 Ink 的 DECSTBM 快速路径有效
-// （每次滚动小于视口高度减一）并产生平滑移动；wheelAccel.ts 会在持续滚动时
-// 逐步提升该值。
-export const WHEEL_SCROLL_STEP = 1
+// 加速前每次滚轮事件滚动的行数。默认 3，对齐 Codex 的每格滚动范围；
+// 仍通常小于视口高度减一，可保持 Ink 的 DECSTBM 快速路径有效。
+// wheelAccel.ts 会在持续滚动时逐步提升该值。
+export const WHEEL_SCROLL_STEP = 3

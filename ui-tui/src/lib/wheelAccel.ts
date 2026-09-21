@@ -9,10 +9,11 @@
 // 根据事件间隔和方向翻转使用启发式：
 //
 //   间隔 < 5ms                  → 同批突发 → 每事件 1 行
-//   间隔 < 40ms（原生）         → 增幅 +0.3，上限 6
+//   间隔 ≤ 160ms（原生）        → 增幅 +0.5，上限 6
+//   间隔 > 160ms（原生）        → 重置，保持有意单击的响应性
 //   间隔 80-500ms（xterm.js）   → mult = 1 + (mult-1)·0.5^(gap/150) + 5·decay
 //                                 慢速上限 3，快速上限 6
-//   间隔 > 500ms                → 重置，保持有意单击的响应性
+//   间隔 > 500ms（xterm.js）    → 重置
 //   翻转后 200ms 内翻回          → 编码器回弹 → 启用滚轮模式（粘性上限）
 //   连续 5 个 <5ms 事件          → 触控板轻扫 → 退出滚轮模式
 //
@@ -22,8 +23,8 @@
 import { isXtermJs } from '@hermes/ink'
 
 // ── 原生终端（Ghostty、iTerm2、WezTerm 等）────────────────────────────
-const WHEEL_ACCEL_WINDOW_MS = 40
-const WHEEL_ACCEL_STEP = 0.3
+const WHEEL_ACCEL_WINDOW_MS = 160
+const WHEEL_ACCEL_STEP = 0.5
 const WHEEL_ACCEL_MAX = 6
 
 // ── 编码器回弹/滚轮模式（机械滚轮）───────────────────────────────────
@@ -143,7 +144,7 @@ function nativeStep(state: WheelAccelState, dir: -1 | 1, now: number): number {
     return Math.floor(state.mult)
   }
 
-  // 触控板/高分辨率原生输入使用严格 40 毫秒窗口；窗口内递增，更慢则重置到基线。
+  // 原生输入在 160ms 内视为持续滚动并递增；更慢的单击重置到基线，保持精确。
   if (gap > WHEEL_ACCEL_WINDOW_MS) {
     state.mult = state.base
   } else {

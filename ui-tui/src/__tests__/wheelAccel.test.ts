@@ -25,6 +25,21 @@ describe('wheelAccel — native path', () => {
     expect(computeWheelStep(s, 1, 1060)).toBeGreaterThanOrEqual(1)
   })
 
+  it('sustained native events at 120ms ramp above one row', () => {
+    const s = initWheelAccel(false, 1)
+    const rows = [1000, 1120, 1240, 1360, 1480, 1600].map(now => computeWheelStep(s, 1, now))
+
+    expect(rows.at(-1)).toBeGreaterThan(1)
+    expect(rows.every(row => row <= 6)).toBe(true)
+  })
+
+  it('deliberate native clicks at 200ms remain precise', () => {
+    const s = initWheelAccel(false, 1)
+    const rows = [1000, 1200, 1400, 1600].map(now => computeWheelStep(s, 1, now))
+
+    expect(rows).toEqual([1, 1, 1, 1])
+  })
+
   it('gap beyond window resets mult to base', () => {
     const s = initWheelAccel(false, 1)
 
