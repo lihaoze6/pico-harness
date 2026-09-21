@@ -858,15 +858,19 @@ def run_first_turn(
     completed = subprocess.run(
         command,
         capture_output=True,
+        encoding="utf-8",
+        errors="replace",
         text=True,
         timeout=timeout_s,
         check=False,
     )
     elapsed = time.monotonic() - started
+    stdout = completed.stdout or ""
+    stderr = completed.stderr or ""
     if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout).strip()
+        detail = (stderr or stdout).strip()
         raise RuntimeError(detail[-2000:] or f"Runtime Turn exited {completed.returncode}")
-    return completed.stdout.strip() or "Runtime Turn completed.", None, elapsed
+    return stdout.strip() or "Runtime Turn completed.", None, elapsed
 
 
 def _run_test_probe(provider: str, *, non_interactive: bool, warnings: list[str], allow_repick: bool = True) -> str:

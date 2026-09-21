@@ -509,6 +509,8 @@ def test_run_first_turn_uses_public_run_command(
     assert command[4:6] == ["-m", onboard_commands.DEFAULT_PROBE_MESSAGE]
     assert command[-2:] == ["--config", str(tmp_env)]
     assert kwargs["timeout"] == 120
+    assert kwargs["encoding"] == "utf-8"
+    assert kwargs["errors"] == "replace"
     assert text == "Hello from the Runtime"
     assert tokens is None
     assert elapsed >= 0
