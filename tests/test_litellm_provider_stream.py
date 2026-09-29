@@ -14,6 +14,7 @@ patching `litellm.acompletion` after import would not be picked up.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
@@ -355,3 +356,186 @@ async def test_openai_does_not_receive_deepseek_reasoning_replay_field(
     _ = [delta async for delta in provider.chat_stream(messages=messages)]
 
     assert "reasoning_content" not in captured["messages"][1]
+
+
+@pytest.mark.asyncio
+async def test_custom_deepseek_preserves_original_tool_call_id_for_thinking_replay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Custom OpenAI-compatible thinking gateways associate thinking by tool id.
+
+    The gateway rejects a replayed assistant tool call when the original provider
+    id is shortened, so this path must keep the exact id on both the assistant
+    tool call and the matching tool result.
+    """
+    captured: dict[str, Any] = {}
+
+    async def fake_acompletion(**kwargs: Any):
+        captured.update(kwargs)
+        return _fake_stream([_chunk("ok")])
+
+    monkeypatch.setattr(
+        "pico.providers.litellm_provider.acompletion",
+        fake_acompletion,
+    )
+
+    provider = LiteLLMProvider(
+        api_key="test-key",
+        api_base="http://127.0.0.1:9/v1",
+        default_model="deepseek-v4-pro",
+        provider_name="custom",
+    )
+    long_id = "call_00_ofc2MSK9qptdZfbIIIKK7328"
+    messages = [
+        {"role": "user", "content": "inspect the repository"},
+        {
+            "role": "assistant",
+            "content": "",
+            "reasoning_content": "I should inspect the repository.",
+            "tool_calls": [
+                {
+                    "id": long_id,
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "content": "contents", "tool_call_id": long_id},
+    ]
+
+    _ = [delta async for delta in provider.chat_stream(messages=messages)]
+
+    assert captured["messages"][1]["tool_calls"][0]["id"] == long_id
+    assert captured["messages"][2]["tool_call_id"] == long_id
+    assert captured["messages"][1]["reasoning_content"] == "I should inspect the repository."
+
+
+# --- R1: 发送期按 Provider 能力决定是否保留原始 tool_call_id ----------------------
+
+_LONG_TOOL_ID = "call_00_ofc2MSK9qptdZfbIIIKK7328"
+_CUSTOM_GATEWAY = {
+    "api_key": "test-key",
+    "api_base": "http://127.0.0.1:9/v1",
+    "provider_name": "custom",
+}
+
+
+def _replay_messages() -> list[dict[str, Any]]:
+    """模拟 AgentLoop 回放：assistant tool_calls[].id 与 tool.tool_call_id 同源。"""
+    return [
+        {"role": "user", "content": "inspect the repository"},
+        {
+            "role": "assistant",
+            "content": "",
+            "reasoning_content": "I should inspect the repository.",
+            "tool_calls": [
+                {
+                    "id": _LONG_TOOL_ID,
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "content": "contents", "tool_call_id": _LONG_TOOL_ID},
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("default_model", "provider_kwargs", "expect_preserved"),
+    [
+        # Gateway 级能力：gateway 声明 preserve_tool_call_ids 时所有模型都保留原始 ID。
+        ("deepseek-v4-pro", _CUSTOM_GATEWAY, True),
+        # R2 回归：显式 `openai/` 前缀先命中 Standard Spec，Gateway 能力仍必须生效。
+        ("openai/deepseek-v4-pro", _CUSTOM_GATEWAY, True),
+        ("glm-5.3-flash", _CUSTOM_GATEWAY, True),
+        # 非网关直连 Provider 行为不变：仍然确定性缩短，两侧同步。
+        ("deepseek/deepseek-v4-flash", {"api_key": "test-key"}, False),
+    ],
+)
+async def test_tool_call_id_replay_follows_provider_capability(
+    monkeypatch: pytest.MonkeyPatch,
+    default_model: str,
+    provider_kwargs: dict[str, Any],
+    expect_preserved: bool,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_acompletion(**kwargs: Any):
+        captured.update(kwargs)
+        return _fake_stream([_chunk("ok")])
+
+    monkeypatch.setattr("pico.providers.litellm_provider.acompletion", fake_acompletion)
+
+    provider = LiteLLMProvider(default_model=default_model, **provider_kwargs)
+    _ = [delta async for delta in provider.chat_stream(messages=_replay_messages())]
+
+    assistant_id = captured["messages"][1]["tool_calls"][0]["id"]
+    tool_id = captured["messages"][2]["tool_call_id"]
+
+    # assistant 侧与 tool 侧必须始终一致，否则 Provider 会拒绝断裂的关联。
+    assert assistant_id == tool_id
+    if expect_preserved:
+        assert assistant_id == _LONG_TOOL_ID
+    else:
+        assert assistant_id != _LONG_TOOL_ID
+        assert assistant_id == hashlib.sha1(_LONG_TOOL_ID.encode()).hexdigest()[:9]
+
+
+@pytest.mark.asyncio
+async def test_chat_non_streaming_replays_provider_tool_call_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """非流式端到端（gateway/cron/subagent 路径）：解析保留 ID，回放不再被改写。
+
+    第一轮 chat() 拿到 tool_call 后按 AgentLoop 方式回放，捕获的 messages 中 assistant
+    tool_calls[].id 与对应 tool 消息的 tool_call_id 必须都是 Provider 原始长 ID。
+    """
+    captured: dict[str, Any] = {}
+    response = SimpleNamespace(
+        model="deepseek-v4-pro",
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content="",
+                    tool_calls=[
+                        SimpleNamespace(
+                            id=_LONG_TOOL_ID,
+                            function=SimpleNamespace(name="read_file", arguments="{}"),
+                        )
+                    ],
+                    reasoning_content=None,
+                    thinking_blocks=None,
+                ),
+                finish_reason="tool_calls",
+            )
+        ],
+        usage=None,
+    )
+
+    async def fake_acompletion(**kwargs: Any):
+        captured.update(kwargs)
+        return response
+
+    monkeypatch.setattr("pico.providers.litellm_provider.acompletion", fake_acompletion)
+
+    provider = LiteLLMProvider(default_model="deepseek-v4-pro", **_CUSTOM_GATEWAY)
+    first = await provider.chat(
+        messages=[{"role": "user", "content": "inspect the repository"}],
+        tools=[{"type": "function", "function": {"name": "read_file", "parameters": {}}}],
+    )
+
+    assert [tc.id for tc in first.tool_calls] == [_LONG_TOOL_ID]
+
+    replay = [
+        {"role": "user", "content": "inspect the repository"},
+        {
+            "role": "assistant",
+            "content": first.content or "",
+            "reasoning_content": first.reasoning_content,
+            "tool_calls": [tc.to_openai_tool_call() for tc in first.tool_calls],
+        },
+        {"role": "tool", "content": "contents", "tool_call_id": first.tool_calls[0].id},
+    ]
+    await provider.chat(messages=replay)
+
+    assert captured["messages"][1]["tool_calls"][0]["id"] == _LONG_TOOL_ID
+    assert captured["messages"][2]["tool_call_id"] == _LONG_TOOL_ID

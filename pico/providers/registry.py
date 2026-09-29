@@ -65,6 +65,9 @@ class ProviderSpec:
     # Provider 要求重放的 assistant 工具调用消息包含 reasoning_content。
     requires_reasoning_content_replay: bool = False
 
+    # Provider/网关会校验重放的 tool_call_id 必须是它自己发出过的，因此发送时不能改写。
+    preserve_tool_call_ids: bool = False
+
     # /v1/models 为空时，onboard 向导为 agents.defaults.model 使用的回退值。
     default_model: str = ""
 
@@ -91,6 +94,9 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         litellm_prefix="openai",
         is_gateway=True,
         default_api_base="http://localhost:8000/v1",
+        # 该网关把 thinking 块按 tool_call_id 关联，回放时收到非自己发出的 ID 会返回 400，
+        # 因此所有模型都必须原样重放 Provider 给出的 ID，不做长度/格式改写。
+        preserve_tool_call_ids=True,
     ),
     # === Azure OpenAI（直连 API，版本 2024-10-21）=====
     ProviderSpec(

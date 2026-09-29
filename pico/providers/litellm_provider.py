@@ -19,7 +19,7 @@ from loguru import logger
 
 from pico.providers.base import LLMProvider, LLMResponse, StreamDelta, ToolCallRequest
 from pico.providers.litellm_setup import import_litellm
-from pico.providers.registry import find_by_model, find_gateway
+from pico.providers.registry import ProviderSpec, find_by_model, find_gateway
 
 litellm = import_litellm()
 acompletion = litellm.acompletion
@@ -41,6 +41,9 @@ warnings.filterwarnings(
 _ALLOWED_MSG_KEYS = frozenset({"role", "content", "tool_calls", "tool_call_id", "name", "reasoning_content"})
 _ANTHROPIC_EXTRA_KEYS = frozenset({"thinking_blocks"})
 _ALNUM = string.ascii_letters + string.digits
+
+# 哨兵：区分「Caller 未传入已解析 Model Spec」与「已解析但无匹配（None）」，避免重复查询 Registry。
+_UNRESOLVED: Any = object()
 
 # LiteLLM 默认给 OpenRouter 请求设置 X-Title="liteLLM" 和
 # HTTP-Referer="https://litellm.ai"，这会让 openrouter.ai/apps 把流量归因给
@@ -300,14 +303,21 @@ class LiteLLMProvider(LLMProvider):
                     return
 
     @staticmethod
-    def _extra_msg_keys(original_model: str, resolved_model: str) -> frozenset[str]:
+    def _extra_msg_keys(
+        original_model: str,
+        resolved_model: str,
+        spec: Any = _UNRESOLVED,
+    ) -> frozenset[str]:
         """返回 Request Sanitization 必须额外保留的 Provider-specific Message Keys。
 
         Original/Resolved Model 命中 Anthropic Spec、名称含 Claude 或 Prefix 为 anthropic 时保留
         ``thinking_blocks``；其他返回空 Set。双 Model 输入处理 Gateway Prefix 改写前后差异，避免
         Extended Thinking 在 Multi-turn Replay 中丢失。
+
+        ``spec`` 是 Caller 已解析的 Model Spec；未传入时本方法自行查询 Registry。
         """
-        spec = find_by_model(original_model) or find_by_model(resolved_model)
+        if spec is _UNRESOLVED:
+            spec = find_by_model(original_model) or find_by_model(resolved_model)
         if (
             (spec and spec.name == "anthropic")
             or "claude" in original_model.lower()
@@ -317,8 +327,12 @@ class LiteLLMProvider(LLMProvider):
         return frozenset()
 
     @staticmethod
-    def _requires_reasoning_content_replay(original_model: str, resolved_model: str) -> bool:
-        spec = find_by_model(original_model) or find_by_model(resolved_model)
+    def _requires_reasoning_content_replay(spec: ProviderSpec | None) -> bool:
+        """返回该 Model Spec 是否要求 Assistant Tool-call Replay 携带 ``reasoning_content``。
+
+        Spec 由 Caller 解析一次后传入，使同一请求的 Extra Keys、Reasoning Replay 与 Tool ID
+        能力共用一次 Registry 查询；``spec`` 为 None（无匹配）时返回 False。
+        """
         return spec is not None and spec.requires_reasoning_content_replay
 
     @staticmethod
@@ -340,13 +354,16 @@ class LiteLLMProvider(LLMProvider):
         messages: list[dict[str, Any]],
         extra_keys: frozenset[str] = frozenset(),
         require_reasoning_content_replay: bool = False,
+        normalize_tool_call_ids: bool = True,
     ) -> list[dict[str, Any]]:
         """移除 Non-standard Message Keys，并维护 Assistant/Tool Replay 的 Provider Contract。
 
         Allowed Set 是 Standard Keys 加 ``extra_keys``；Base Sanitizer 会确保 Assistant Content Key。
-        对要求 Reasoning Replay 的 Provider，带 Tool Calls 但无 reasoning_content 的 Assistant 补空
-        String。所有 Assistant ``tool_calls[].id`` 与 Tool ``tool_call_id`` 通过同一 id_map 同步缩短，
-        否则 Strict Provider 会拒绝断裂关联。
+        对要求 Reasoning Replay 的 Provider，带 Tool Calls 但无 reasoning_content 的 Assistant
+        补空 String。所有 Assistant ``tool_calls[].id`` 与 Tool ``tool_call_id`` 默认通过同一
+        id_map 同步缩短，否则 Strict Provider 会拒绝断裂关联；
+        ``normalize_tool_call_ids=False`` 时保留原始 id，供依赖 tool_call_id 关联 thinking
+        块的网关使用。
 
         返回 Sanitized Copy，不修改 Session History；Empty Content 在 Caller 先由 Base Helper 清理。
         """
@@ -368,6 +385,9 @@ class LiteLLMProvider(LLMProvider):
             ):
                 clean["reasoning_content"] = ""
 
+            if not normalize_tool_call_ids:
+                continue
+
             # 缩短后保持 assistant tool_calls[].id 与 tool tool_call_id 同步，
             # 否则严格 Provider 会拒绝断裂的关联。
             if isinstance(clean.get("tool_calls"), list):
@@ -384,6 +404,30 @@ class LiteLLMProvider(LLMProvider):
             if clean.get("tool_call_id"):
                 clean["tool_call_id"] = map_id(clean["tool_call_id"])
         return sanitized
+
+    def _prepare_messages(
+        self,
+        original_model: str,
+        resolved_model: str,
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """净化消息，并按 Provider 能力决定是否保留 Provider 原始 ``tool_call_id``。
+
+        Model Spec 在本方法只查询一次，供 Extra Message Keys、Reasoning Replay 与 Tool ID 能力共用。
+        是否保留 Tool ID 取 Gateway 级（``self._gateway``）与 Model 级（``spec``）声明的并集：同一
+        Model 别名可能先命中 Standard Spec（例如显式 ``openai/`` 前缀），只依赖 Model 级声明会让
+        网关能力被静默绕过。
+        """
+        spec = find_by_model(original_model) or find_by_model(resolved_model)
+        preserve_tool_ids = bool(
+            (self._gateway and self._gateway.preserve_tool_call_ids) or (spec and spec.preserve_tool_call_ids)
+        )
+        return self._sanitize_messages(
+            messages,
+            extra_keys=self._extra_msg_keys(original_model, resolved_model, spec),
+            require_reasoning_content_replay=self._requires_reasoning_content_replay(spec),
+            normalize_tool_call_ids=not preserve_tool_ids,
+        )
 
     async def chat(
         self,
@@ -408,9 +452,6 @@ class LiteLLMProvider(LLMProvider):
         """
         original_model = model or self.default_model
         model = self._resolve_model(original_model)
-        extra_msg_keys = self._extra_msg_keys(original_model, model)
-        require_reasoning_content_replay = self._requires_reasoning_content_replay(original_model, model)
-
         if self._supports_cache_control(original_model) and not self.disable_auto_cache_control:
             messages, tools = self._apply_cache_control(messages, tools)
 
@@ -420,10 +461,10 @@ class LiteLLMProvider(LLMProvider):
 
         kwargs: dict[str, Any] = {
             "model": model,
-            "messages": self._sanitize_messages(
+            "messages": self._prepare_messages(
+                original_model,
+                model,
                 self._sanitize_empty_content(messages),
-                extra_keys=extra_msg_keys,
-                require_reasoning_content_replay=require_reasoning_content_replay,
             ),
             "max_tokens": max_tokens,
             "temperature": temperature,
@@ -498,9 +539,6 @@ class LiteLLMProvider(LLMProvider):
         """
         original_model = model or self.default_model
         model = self._resolve_model(original_model)
-        extra_msg_keys = self._extra_msg_keys(original_model, model)
-        require_reasoning_content_replay = self._requires_reasoning_content_replay(original_model, model)
-
         if self._supports_cache_control(original_model) and not self.disable_auto_cache_control:
             messages, tools = self._apply_cache_control(messages, tools)
 
@@ -508,10 +546,10 @@ class LiteLLMProvider(LLMProvider):
 
         kwargs: dict[str, Any] = {
             "model": model,
-            "messages": self._sanitize_messages(
+            "messages": self._prepare_messages(
+                original_model,
+                model,
                 self._sanitize_empty_content(messages),
-                extra_keys=extra_msg_keys,
-                require_reasoning_content_replay=require_reasoning_content_replay,
             ),
             "max_tokens": max_tokens,
             "temperature": temperature,
@@ -617,7 +655,8 @@ class LiteLLMProvider(LLMProvider):
 
         部分 Provider（如 GitHub Copilot）把 Content 与 Tool Calls 拆到 Multiple Choices，方法会合并
         所有 Raw Tool Calls，并选择相应 Finish Reason/首个非空 Content。Arguments String 用
-        json_repair 解析；每项换成 9-char ID，同时保留 Call/Function Provider-specific Fields。
+        json_repair 解析；Tool Call ID 原样保留 Provider 返回值（缺失时回退 9-char 生成），同时保留
+        Call/Function Provider-specific Fields。
 
         Usage 经 Cache/Reasoning-aware Normalizer，Message Reasoning/Thinking Blocks 原样携带，Actual
         Model 也写入 Response。函数假设至少一个 Choice；Transport/Shape Exception 由 Chat Boundary
@@ -646,6 +685,7 @@ class LiteLLMProvider(LLMProvider):
             )
 
         tool_calls = []
+        seen_ids: set[str] = set()
         for tc in raw_tool_calls:
             # 必要时从 JSON 字符串解析参数。
             args = tc.function.arguments
@@ -655,9 +695,20 @@ class LiteLLMProvider(LLMProvider):
             provider_specific_fields = getattr(tc, "provider_specific_fields", None) or None
             function_provider_specific_fields = getattr(tc.function, "provider_specific_fields", None) or None
 
+            # 忠实保留 Provider 原始 ID；改写会让校验 tool_call_id 来源的网关在回放时拒绝请求。
+            # 是否需要缩短由发送期 sanitizer 按 Provider 能力决定，解析层不预判。
+            tool_id = getattr(tc, "id", None)
+            if not isinstance(tool_id, str) or not tool_id:
+                tool_id = _short_tool_id()
+            # 多个 choice 合并后同一 ID 可能重复；重复时重新生成，保持响应内 ID 唯一。
+            # 每条 tool result 仍由同一个 ToolCallRequest.id 派生，配对不会断。
+            while tool_id in seen_ids:
+                tool_id = _short_tool_id()
+            seen_ids.add(tool_id)
+
             tool_calls.append(
                 ToolCallRequest(
-                    id=_short_tool_id(),
+                    id=tool_id,
                     name=tc.function.name,
                     arguments=args,
                     provider_specific_fields=provider_specific_fields,
