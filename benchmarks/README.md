@@ -49,6 +49,13 @@ benchmarks/
 │                           its own bench plugin; materialized to subject/
 │                           (gitignored) by scripts/setup_small_real_subject.py
 │
+├── frontierharness/    FrontierHarness Eval adapter for Pico
+│   ├── install-pico.sh     FrontierHarness --install-script (runtime side)
+│   ├── wsl-setup.sh        Driver-host prep for WSL (Runta CLI is not on Windows)
+│   ├── wsl-tunnel.sh       Publish an in-LAN model gateway for Runta trials
+│   ├── pico_adapter/       PicoAgent(BaseInstalledAgent) driven by Harbor
+│   └── README.md           Provision, smoke, and known gaps
+│
 ├── pinchbench/         Context / AgentLoop capability benchmark
 │   ├── tasks/             23 task_*.md cards (YAML frontmatter + sections)
 │   ├── direct/            Drives AgentLoop.run_turn() per task

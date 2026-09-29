@@ -1,0 +1,14 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pico-harbor-adapter"
+version = "0.1.0"
+description = "Harbor agent adapter that runs the Pico harness inside evaluation task containers"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["pico_adapter"]
+
