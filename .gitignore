@@ -36,3 +36,14 @@ benchmarks/clawbench/results/
 benchmarks/pinchbench/benchmark.log
 benchmarks/pinchbench/results/
 benchmarks/evolver/subject/
+
+# Local runtime data / personal files (never commit)
+.claude/
+.workbuddy-ai/
+agent_memory/
+user_memory/
+neo_data/
+resumes/
+TOOLS.md
+search_results*.json
+validated_results.json
