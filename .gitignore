@@ -44,6 +44,6 @@ agent_memory/
 user_memory/
 neo_data/
 resumes/
-TOOLS.md
+/TOOLS.md
 search_results*.json
 validated_results.json
