@@ -52,21 +52,27 @@ bash "$FH/provision-golden-checkpoint.sh" \
   --cpus 4 --memory 8192 --disk-size-gib 50 --keep-runtime \
   --install-script /path/to/pico-harness/benchmarks/frontierharness/install-pico.sh
 
-# 2. Smoke-test one task per suite before spending on 30.
+# 2. Smoke-test one task per suite before spending on 30. The runner template is
+# replaced wholesale, so branch on {suite}: Terminal-Bench goes through Harbor,
+# DeepSWE through Pier. Two deviations from the stock templates are required --
+# see "Runner command overrides" below.
 printf '%s\n' terminal-bench/regex-log datacurve/anko-typed-variable-bindings > smoke.txt
+CMD="if [ {suite} = terminal-bench ]; then harbor run -d terminal-bench@2.0 -i {task} -a {harness} -m {model} --jobs-dir {jobs} --extra-docker-compose /work/runta-ca-overlay.yaml -r 2 -y --ae PICO_API_KEY=runta-secret-stub --agent-setup-timeout-multiplier 2.5; else pier run -p /work/deep-swe/tasks/{task} --agent-import-path {harness} --model {model} --jobs-dir {jobs} --ae PICO_API_KEY=runta-secret-stub --agent-setup-timeout-multiplier 2.5; fi"
 bash "$FH/run-trials.sh" \
   --checkpoint fh-golden-pico-v1 \
   --harness 'pico_adapter.pico_agent:PicoAgent' \
   --provider fireworks \
   --run-id 2026-09-29-pico-smoke \
-  --tasks smoke.txt --out runs
+  --tasks smoke.txt --out runs \
+  --cmd "$CMD"
 
-# 3. Full published set.
+# 3. Full published set, same --cmd.
 bash "$FH/run-trials.sh" \
   --checkpoint fh-golden-pico-v1 \
   --harness 'pico_adapter.pico_agent:PicoAgent' \
   --provider fireworks \
-  --run-id 2026-09-29-pico --out runs
+  --run-id 2026-09-29-pico --out runs \
+  --cmd "$CMD"
 ```
 
 The smoke results are not leaderboard-comparable; they exist to prove install,
@@ -84,10 +90,40 @@ Passed as Harbor agent kwargs (`--ak key=value`) via `run-trials.sh --cmd ...`:
 | `pico_max_tool_iterations` | `40` | `agents.defaults.maxToolIterations` |
 | `pico_context_window_tokens` | `65536` | `agents.defaults.contextWindowTokens` |
 | `pico_restrict_to_workspace` | `false` | Set `true` to confine tools to the task workdir |
-| `override_setup_timeout_sec` | Harbor's `360` | Raise it: the per-trial Pico install is not free |
 
-`--ak override_setup_timeout_sec=900` is the recommended starting point for a
-full sweep.
+The per-trial Pico install is not free, so raise Harbor's 360 s agent-setup
+timeout. That timeout is a **job** field, not an agent kwarg:
+`--ak override_setup_timeout_sec=900` is swallowed by `BaseAgent.__init__`'s
+`**kwargs` and does nothing. The supported knob is
+`--agent-setup-timeout-multiplier` (`360 x 2.5 = 900`), which Pier also accepts.
+
+### Runner command overrides
+
+`run-trials.sh --cmd` replaces the whole per-suite template, so a single string
+has to dispatch on the `{suite}` placeholder. Two deviations from the stock
+templates are required:
+
+1. **`--ae PICO_API_KEY=runta-secret-stub`.** FrontierHarness injects the real
+   key only at the egress proxy; the runtime is expected to carry the literal
+   stub so the harness has something non-empty to read. On at least one tenant
+   the stub is *not* injected (`provision-golden-checkpoint.sh` warns
+   `PICO_API_KEY is not exposed as a stub inside the runtime`) and the adapter
+   raises `No API key found` before the first turn. Harbor resolves agent
+   `extra_env` before the process environment, so passing the stub on the runner
+   command satisfies the adapter while the proxy still swaps the `Authorization`
+   header for the real credential. Confirm the swap with a deliberately bogus
+   key - a `200` proves the proxy is injecting the real one:
+
+   ```bash
+   runta exec <runtime> -- sh -lc 'curl -sS -o /dev/null -w "%{http_code}\n" \
+     -H "Authorization: Bearer bogus" https://<secret-host>/v1/models'
+   ```
+
+2. **Pier needs `--agent-import-path`, not `--agent`.** Pier's `--agent` only
+   accepts its built-in enum (`oracle`, `codex`, `claude-code`, ...); a custom
+   import path has to go through `--agent-import-path`. The stock
+   `run-trials.sh` template passes `--agent {harness}`, which is why the
+   DeepSWE side needs the override.
 
 Route prefixes with a built-in base URL: `fireworks_ai`, `moonshot`, `kimi`,
 `openrouter`, `together_ai`, `deepseek`. Anything else - including

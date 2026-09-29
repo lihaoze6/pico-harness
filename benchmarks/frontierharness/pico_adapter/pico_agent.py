@@ -305,6 +305,11 @@ class PicoAgent(BaseInstalledAgent):
                 }
             },
             "providers": {"custom": {"apiKey": api_key, "apiBase": api_base}},
+            # Myna is Pico's optional memory plugin and is not installed in task
+            # containers, but Pico's config default is ``memory.backend = "myna"``,
+            # which aborts a headless run. Memory is meaningless for a single
+            # headless turn, so disable it explicitly.
+            "memory": {"backend": None},
             "tools": {
                 "restrictToWorkspace": self._pico_restrict_to_workspace,
                 # Headless runs have no question broker, so ask_user could only
