@@ -67,8 +67,28 @@ cat > /work/pico-adapter-install.json <<JSON
   "adapter_dir": "$ADAPTER_DIR",
   "adapter_requirement": "$ADAPTER_REQ",
   "harbor_pin": "$HARBOR_PIN",
-  "harbor_pin_fallback": "$HARBOR_PIN_FALLBACK"
+  "harbor_pin_fallback": "$HARBOR_PIN_FALLBACK",
+  "pier_pin": "$PIER_PIN"
 }
 JSON
 
+
+# Pier owns the DeepSWE (`datacurve/*`) half of the suite and resolves --harness
+# from its own uv tool environment, so the adapter has to be installed there too:
+# without this, Pier fails with "Failed to import module 'pico_adapter.pico_agent'".
+PIER_PIN="datacurve-pier==0.3.1"
+echo "install-pico.sh: adding $ADAPTER_DIR to the Pier tool environment"
+uv tool install --quiet --with "$ADAPTER_REQ" "$PIER_PIN"
+
+PIER_PYTHON="${TOOLS_ROOT:+$TOOLS_ROOT/datacurve-pier/bin/python}"
+if [ -n "$PIER_PYTHON" ] && [ -x "$PIER_PYTHON" ]; then
+  "$PIER_PYTHON" - <<'PY'
+from pico_adapter.pico_agent import PicoAgent
+
+print(f"install-pico.sh: pier adapter import ok -> {PicoAgent.import_path()}")
+PY
+else
+  echo "install-pico.sh: warning: could not locate the Pier tool interpreter" >&2
+  echo "  expected ${TOOLS_ROOT:-<uv tool dir>}/datacurve-pier/bin/python" >&2
+fi
 echo "install-pico.sh: done; pass --harness 'pico_adapter.pico_agent:PicoAgent' to provision and run-trials"

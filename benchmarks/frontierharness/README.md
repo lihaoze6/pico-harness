@@ -219,9 +219,10 @@ Three things no repository can supply:
 * **Cost accounting on the eval side.** `run-trials.sh` builds costs through
   `scripts/usage_details.py`, which needs a Pico branch. The raw numbers already
   exist in the ledger this adapter collects.
-* **Pier side unverified.** `pier run --agent <name>` is used for DeepSWE tasks;
-  whether Pier accepts an import path as readily as Harbor does has not been
-  exercised here, so validate with the `datacurve/*` smoke task first.
+* **Pier needs the adapter in its own tool environment.** `pier run` resolves
+  `--agent-import-path` against the `datacurve-pier` uv tool env, not Harbor's,
+  so `install-pico.sh` installs the adapter into both. Before that was fixed,
+  Pier failed with `Failed to import module 'pico_adapter.pico_agent'`.
 * **Install cost per trial.** Every trial installs Pico from scratch inside a
   fresh container (tens of seconds to a few minutes). Raise
   `override_setup_timeout_sec` before a full sweep.
