@@ -23,6 +23,7 @@ export PATH="$HOME/.local/bin:$PATH"
 # land in the same environment Harbor runs from.
 HARBOR_PIN="harbor[modal]==0.22.0"
 HARBOR_PIN_FALLBACK="harbor==0.22.0"
+PIER_PIN="datacurve-pier==0.3.1"
 
 REPO_ROOT="$PWD"
 ADAPTER_DIR="$REPO_ROOT/benchmarks/frontierharness"
@@ -76,7 +77,6 @@ JSON
 # Pier owns the DeepSWE (`datacurve/*`) half of the suite and resolves --harness
 # from its own uv tool environment, so the adapter has to be installed there too:
 # without this, Pier fails with "Failed to import module 'pico_adapter.pico_agent'".
-PIER_PIN="datacurve-pier==0.3.1"
 echo "install-pico.sh: adding $ADAPTER_DIR to the Pier tool environment"
 uv tool install --quiet --with "$ADAPTER_REQ" "$PIER_PIN"
 
