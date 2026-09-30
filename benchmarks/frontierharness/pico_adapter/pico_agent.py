@@ -88,7 +88,7 @@ _ROUTE_BASE_URLS: dict[str, str] = {
     # wsl-tunnel.sh. A quick tunnel hands out a random hostname on every start,
     # so this entry and the --secret-host passed to FrontierHarness must change
     # together when the tunnel is restarted.
-    "mygw": "https://roles-broadband-millions-found.trycloudflare.com/v1",
+    "mygw": "https://challenges-webcast-origin-pirates.trycloudflare.com/v1",
 }
 
 #: Directories/suffixes that must not be uploaded into the task container.
