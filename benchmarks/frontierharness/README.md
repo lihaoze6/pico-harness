@@ -89,7 +89,14 @@ Passed as Harbor agent kwargs (`--ak key=value`) via `run-trials.sh --cmd ...`:
 | `pico_model` | route minus provider prefix | Bare model id |
 | `pico_max_tool_iterations` | `40` | `agents.defaults.maxToolIterations` |
 | `pico_context_window_tokens` | `65536` | `agents.defaults.contextWindowTokens` |
+| `pico_max_tokens` | `32768` | `agents.defaults.maxTokens`; reserve is subtracted from the context window |
 | `pico_restrict_to_workspace` | `false` | Set `true` to confine tools to the task workdir |
+
+`pico_max_tokens` defaults to `32768` instead of Pico's own `8192`: a thinking-mode
+model can spend the entire budget on reasoning, ending the turn with
+`finish_reason=length` and empty content - and replaying that think-only message
+is then rejected upstream. The reserve is subtracted from `context_window_tokens`,
+so this leaves half the window for conversation history rather than ballooning.
 
 The per-trial Pico install is not free, so raise Harbor's 360 s agent-setup
 timeout. That timeout is a **job** field, not an agent kwarg:

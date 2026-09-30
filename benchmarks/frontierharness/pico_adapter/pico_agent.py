@@ -62,6 +62,13 @@ _CONFIG_PATH = f"{_CONFIG_DIR}/config.json"
 #: eval can pin them without depending on Pico's defaults drifting.
 _DEFAULT_MAX_TOOL_ITERATIONS = 40
 _DEFAULT_CONTEXT_WINDOW_TOKENS = 65536
+# Pico defaults ``agents.defaults.max_tokens`` to 8192. A thinking-mode model can
+# burn that entire budget on reasoning, ending the turn with
+# ``finish_reason=length`` and empty content, and replaying that think-only
+# message is rejected upstream ("content[].thinking ... must be passed back").
+# The reserve is subtracted from ``context_window_tokens``, so it stays at half
+# the window instead of ballooning.
+_DEFAULT_MAX_TOKENS = 32768
 
 #: LiteLLM route prefix -> OpenAI-compatible base URL for
 #: ``providers.custom.apiBase``. Pico's ``custom`` provider maps to
@@ -155,6 +162,7 @@ class PicoAgent(BaseInstalledAgent):
         pico_source_dir: str = "/work/harness",
         pico_max_tool_iterations: int | None = None,
         pico_context_window_tokens: int | None = None,
+        pico_max_tokens: int | None = None,
         pico_restrict_to_workspace: bool = False,
         **kwargs: Any,
     ) -> None:
@@ -164,6 +172,7 @@ class PicoAgent(BaseInstalledAgent):
         self._pico_source_dir = pico_source_dir
         self._pico_max_tool_iterations = pico_max_tool_iterations
         self._pico_context_window_tokens = pico_context_window_tokens
+        self._pico_max_tokens = pico_max_tokens
         self._pico_restrict_to_workspace = pico_restrict_to_workspace
 
     @staticmethod
@@ -302,6 +311,7 @@ class PicoAgent(BaseInstalledAgent):
                     "model": model,
                     "maxToolIterations": (self._pico_max_tool_iterations or _DEFAULT_MAX_TOOL_ITERATIONS),
                     "contextWindowTokens": (self._pico_context_window_tokens or _DEFAULT_CONTEXT_WINDOW_TOKENS),
+                    "maxTokens": (self._pico_max_tokens or _DEFAULT_MAX_TOKENS),
                 }
             },
             "providers": {"custom": {"apiKey": api_key, "apiBase": api_base}},
