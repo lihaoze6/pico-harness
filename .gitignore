@@ -45,5 +45,6 @@ user_memory/
 neo_data/
 resumes/
 /TOOLS.md
+/debug.log
 search_results*.json
 validated_results.json
