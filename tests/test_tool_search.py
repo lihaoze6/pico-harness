@@ -53,7 +53,7 @@ class _ContextTool(_FakeTool):
         super().__init__(name, "records execution context")
         self.context: ToolExecutionContext | None = None
 
-    async def execute_with_context(self, context: ToolExecutionContext, **kwargs: Any) -> str:
+    async def execute_with_context(self, context: ToolExecutionContext, arguments: dict[str, Any]) -> str:
         self.context = context
         return f"ran {self.name}"
 
@@ -290,8 +290,7 @@ async def test_tool_call_preserves_parent_call_identity_for_target_execution() -
 
     out = await ToolCallTool(ctrl).execute_with_context(
         ToolExecutionContext(call_id="outer", session_key="cli:c", iteration=2),
-        name=target.name,
-        arguments={},
+        {"name": target.name, "arguments": {}},
     )
 
     assert out == "ran create_issue"

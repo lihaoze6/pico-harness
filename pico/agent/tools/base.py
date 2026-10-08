@@ -104,8 +104,14 @@ class Tool(ABC):
         """
         pass
 
-    async def execute_with_context(self, context: ToolExecutionContext, **kwargs: Any) -> str:
-        return await self.execute(**kwargs)
+    async def execute_with_context(self, context: ToolExecutionContext, arguments: dict[str, Any]) -> str:
+        """用一次调用的 ``context`` 与已校验 ``arguments`` 执行 Tool。
+
+        Registry 以单个 Dict 传递参数，而不是 ``**kwargs`` 展开：Tool 的 JSON Schema 可以自由声明
+        任意参数名（例如 ``grep`` 的 ``context``），不会与框架自身的 ``context`` 形参冲突。默认实现
+        忽略 ``context`` 并委托 ``execute``；需要调用身份的子类（如 ``tool_call``）覆写本方法。
+        """
+        return await self.execute(**arguments)
 
     def resolve_invocation(self, invocation: ToolInvocation) -> ToolInvocation:
         return invocation

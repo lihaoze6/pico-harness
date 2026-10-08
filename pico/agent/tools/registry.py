@@ -105,7 +105,8 @@ class ToolRegistry:
         ``call_id`` 是模型自己的 tool-call id，不参与 dispatch；它只写入
         ``tool.call_id``/ToolExecutionContext，使 tracing span 与同一调用发出的 ToolEvent 关联。
         未找到名称时返回含 Available 列表的失败结果。找到后依次执行 schema cast、validation，
-        再调用 `execute_with_context`。
+        再以 ``(context, params)`` 调用 `execute_with_context`；参数是单个 Dict 而非 ``**kwargs``
+        展开，因此 Tool Schema 可以声明任意参数名而不与框架形参冲突。
 
         普通 Tool 由 `asyncio.wait_for` 应用自身 ``timeout_seconds`` 或 Registry 300 秒上限；
         ``blocking_interaction`` 有意等待人类，不套统一超时。显式 ToolResult 原样返回，以
@@ -141,10 +142,10 @@ class ToolRegistry:
             ceiling = tool.timeout_seconds or self.DEFAULT_TOOL_TIMEOUT_S
             if tool.blocking_interaction:
                 # 该工具有意等待人类，不得被超时计时器终止。
-                result = await tool.execute_with_context(invocation.context, **params)
+                result = await tool.execute_with_context(invocation.context, params)
             else:
                 result = await asyncio.wait_for(
-                    tool.execute_with_context(invocation.context, **params),
+                    tool.execute_with_context(invocation.context, params),
                     timeout=ceiling,
                 )
 

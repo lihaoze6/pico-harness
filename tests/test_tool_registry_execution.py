@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -227,3 +228,34 @@ async def test_cancelled_parallel_call_cancels_and_joins_siblings() -> None:
 def test_builtin_tools_declare_effect_and_concurrency(tool_type, effect, concurrency_safe) -> None:
     assert tool_type.capability.effect is effect
     assert tool_type.capability.concurrency_safe is concurrency_safe
+
+
+async def test_grep_context_param_does_not_collide_with_execution_context(tmp_path: Path) -> None:
+    """``grep`` 的 ``context`` 参数不得与框架保留形参重名而触发 TypeError。
+
+    回归：Registry 曾以 ``execute_with_context(ctx, **params)`` 展开调用，
+    ``grep context=1`` 必然抛 "got multiple values for argument 'context'"。
+    """
+    target = tmp_path / "sample.py"
+    target.write_text("first\nsecond\nthird\n", encoding="utf-8")
+    registry = ToolRegistry()
+    registry.register(GrepTool(workspace=tmp_path, allowed_dir=tmp_path))
+
+    result = await registry.execute("grep", {"pattern": "second", "path": str(target), "context": 1})
+
+    assert result.failed is False
+    assert "second" in str(result)
+    assert "first" in str(result)
+
+
+async def test_grep_without_context_param_still_works(tmp_path: Path) -> None:
+    """对照：不传 ``context`` 的原路径不得因契约改动而退化。"""
+    target = tmp_path / "sample.py"
+    target.write_text("alpha\nbeta\n", encoding="utf-8")
+    registry = ToolRegistry()
+    registry.register(GrepTool(workspace=tmp_path, allowed_dir=tmp_path))
+
+    result = await registry.execute("grep", {"pattern": "beta", "path": str(target)})
+
+    assert result.failed is False
+    assert "beta" in str(result)

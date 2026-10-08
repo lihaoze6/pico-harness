@@ -263,13 +263,17 @@ class ToolCallTool(Tool):
     async def execute(self, name: str, arguments: dict[str, Any] | None = None) -> str:
         return await self._ctrl.call(name, arguments)
 
-    async def execute_with_context(
-        self,
-        context: ToolExecutionContext,
-        name: str,
-        arguments: dict[str, Any] | None = None,
-    ) -> str:
-        return await self._ctrl.call(name, arguments, context)
+    async def execute_with_context(self, context: ToolExecutionContext, arguments: dict[str, Any]) -> str:
+        """用外层 ``tool_call`` 参数执行目标 Tool，并保留 Meta call id。
+
+        Registry 以单个 Dict 传参，所以这里按 ``name``/``arguments`` 键取值，而不是把它们声明为
+        同名形参——否则解析后的目标参数一旦出现同名键就会与框架形参冲突。
+        """
+        return await self._ctrl.call(
+            arguments.get("name"),
+            arguments.get("arguments"),
+            context,
+        )
 
     def resolve_invocation(self, invocation: ToolInvocation) -> ToolInvocation:
         name = invocation.arguments.get("name")
