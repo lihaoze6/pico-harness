@@ -6,6 +6,8 @@ All tests run without boxlite installed and without KVM/Hypervisor access.
 from __future__ import annotations
 
 import asyncio
+import locale
+import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -20,6 +22,7 @@ from pico.sandbox import (
     build_executor,
 )
 from pico.sandbox.boxlite_executor import BoxliteExecutor
+from pico.sandbox.direct_executor import _decode_output, _fallback_encodings
 
 # ---------------------------------------------------------------------------
 
@@ -254,6 +257,55 @@ class TestDirectExecutor:
         e = DirectExecutor()
         await e.start()
         await e.stop()
+
+    def test_decode_output_empty(self):
+        assert _decode_output(b"") == ""
+
+    def test_decode_output_utf8_passthrough(self):
+        """UTF-8 输出必须零损失直通，不被回退编码猜解。"""
+        assert _decode_output("你好".encode("utf-8")) == "你好"
+
+    def test_decode_output_falls_back_to_local_codepage(self, monkeypatch):
+        """非 UTF-8 字节按回退编码解出中文，而不是替换成 U+FFFD。"""
+        monkeypatch.setattr("pico.sandbox.direct_executor._fallback_encodings", lambda: ("gbk",))
+        text = "应用激活信息"
+        decoded = _decode_output(text.encode("gbk"))
+        assert decoded == text
+        assert "\ufffd" not in decoded
+
+    def test_decode_output_never_raises_on_undecodable_bytes(self, monkeypatch):
+        """所有回退编码都失败时仍返回字符串，不抛异常。"""
+        monkeypatch.setattr("pico.sandbox.direct_executor._fallback_encodings", lambda: ("ascii",))
+        decoded = _decode_output(b"\xff\xfe\x80")
+        assert isinstance(decoded, str)
+        assert decoded
+
+    def test_fallback_encodings_starts_with_preferred_encoding(self):
+        encodings = _fallback_encodings()
+        assert encodings
+        assert encodings[0] == locale.getpreferredencoding(False)
+
+    async def test_exec_decodes_local_codepage_output(self, tmp_path):
+        """子进程按本机代码页输出中文时，exec 结果不得出现替换字符。"""
+        sample = "应用激活信息"
+        encoding = locale.getpreferredencoding(False)
+        try:
+            sample.encode(encoding)
+        except (UnicodeEncodeError, LookupError):
+            pytest.skip(f"{sample!r} is not representable in {encoding}")
+
+        script = tmp_path / "emit_local_codepage.py"
+        script.write_text(
+            "import sys\n"
+            f"sample = {sample!r}\n"
+            "sys.stdout.buffer.write(sample.encode(sys.stdout.encoding or 'utf-8'))\n",
+            encoding="utf-8",
+        )
+        result = await DirectExecutor().exec(f'"{sys.executable}" "{script}"', cwd=str(tmp_path))
+
+        assert result.exit_code == 0
+        assert "\ufffd" not in result.stdout
+        assert sample in result.stdout
 
 
 # ---------------------------------------------------------------------------
